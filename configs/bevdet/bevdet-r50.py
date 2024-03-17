@@ -41,6 +41,7 @@ data_config = {
     6,
     'input_size': (256, 704),
     'src_size': (900, 1600),
+    # # 6 900 1600 3 -> 6 3 256 704 特征图（记录augmentation，即BEV下的投影关系）
 
     # Augmentation
     'resize': (-0.06, 0.11),
@@ -62,8 +63,14 @@ voxel_size = [0.1, 0.1, 0.2]
 
 numC_Trans = 64
 
+# 模型流
 model = dict(
-    type='BEVDet',
+    type='BEVDet', # 模型名称
+    # 6 900 1600 3 -> 6 3 256 704 特征图（记录augmentation，即BEV下的投影关系）
+    # ========================================
+    # 相机图像特征提取
+    # mmdet/models/backbones/resnet.py
+    # 6 3 256 704
     img_backbone=dict(
         pretrained='torchvision://resnet50',
         type='ResNet',
@@ -75,6 +82,8 @@ model = dict(
         norm_eval=False,
         with_cp=True,
         style='pytorch'),
+    # 6 1024 16 44 / 6 2048 8 22 # 降采样 输出最后两个通道的feature map
+    # mmdet3d/models/necks/fpn.py
     img_neck=dict(
         type='CustomFPN',
         in_channels=[1024, 2048],
@@ -82,6 +91,10 @@ model = dict(
         num_outs=1,
         start_level=0,
         out_ids=[0]),
+    # 6 256 16 44
+    # ========================================
+    # 视角转换： 相机 -> BEV
+    # mmdet3d/models/necks/view_transformer.py
     img_view_transformer=dict(
         type='LSSViewTransformer',
         grid_config=grid_config,
@@ -89,6 +102,9 @@ model = dict(
         in_channels=256,
         out_channels=numC_Trans,
         downsample=16),
+    # ========================================
+    # BEV特征提取
+    # mmdet3d/models/backbones/resnet.py
     img_bev_encoder_backbone=dict(
         type='CustomResNet',
         numC_input=numC_Trans,
@@ -97,6 +113,9 @@ model = dict(
         type='FPN_LSS',
         in_channels=numC_Trans * 8 + numC_Trans * 2,
         out_channels=256),
+    # ========================================
+    # Loss 计算
+    # mmdet3d/models/dense_heads/centerpoint_head.py
     pts_bbox_head=dict(
         type='CenterHead',
         in_channels=256,

@@ -13,6 +13,15 @@ from ..builder import NECKS
 
 from torch.utils.checkpoint import checkpoint
 
+"""
+    img_view_transformer=dict(
+        type='LSSViewTransformer',
+        grid_config=grid_config,
+        input_size=data_config['input_size'],
+        in_channels=256,
+        out_channels=numC_Trans,
+        downsample=16),
+"""
 
 @NECKS.register_module()
 class LSSViewTransformer(BaseModule):
@@ -109,6 +118,8 @@ class LSSViewTransformer(BaseModule):
                                        for cfg in [x, y, z]])
 
     def create_frustum(self, depth_cfg, input_size, downsample):
+        # u v d
+        # 6 59 256 704
         """Generate the frustum template for each image.
 
         Args:
@@ -177,7 +188,7 @@ class LSSViewTransformer(BaseModule):
         points = bda[:, :3, :3].view(B, 1, 1, 1, 1, 3, 3).matmul(
             points.unsqueeze(-1)).squeeze(-1)
         points += bda[:, :3, 3].view(B, 1, 1, 1, 1, 3)
-        return points
+        return points  # [m]
 
     def init_acceleration_v2(self, coor):
         """Pre-compute the necessary information in acceleration including the
@@ -201,6 +212,7 @@ class LSSViewTransformer(BaseModule):
         self.interval_lengths = interval_lengths.int().contiguous()
 
     def voxel_pooling_v2(self, coor, depth, feat):
+        # cuda kernel
         ranks_bev, ranks_depth, ranks_feat, \
             interval_starts, interval_lengths = \
             self.voxel_pooling_prepare_v2(coor)
@@ -225,7 +237,7 @@ class LSSViewTransformer(BaseModule):
         # collapse Z
         if self.collapse_z:
             bev_feat = torch.cat(bev_feat.unbind(dim=2), 1)
-        return bev_feat
+        return bev_feat  # B 64 128 128
 
     def voxel_pooling_prepare_v2(self, coor):
         """Data preparation for voxel pooling.
@@ -294,6 +306,7 @@ class LSSViewTransformer(BaseModule):
             self.initial_flag = False
 
     def view_transform_core(self, input, depth, tran_feat):
+        #  核心 LSS
         B, N, C, H, W = input[0].shape
 
         # Lift-Splat
@@ -311,7 +324,7 @@ class LSSViewTransformer(BaseModule):
 
             bev_feat = bev_feat.squeeze(2)
         else:
-            coor = self.get_lidar_coor(*input[1:7])
+            coor = self.get_lidar_coor(*input[1:7]) # *: 解包(即将元组解包成参数)
             bev_feat = self.voxel_pooling_v2(
                 coor, depth.view(B, N, self.D, H, W),
                 tran_feat.view(B, N, self.out_channels, H, W))
@@ -334,9 +347,10 @@ class LSSViewTransformer(BaseModule):
         Returns:
             torch.tensor: Bird-eye-view feature in shape (B, C, H_BEV, W_BEV)
         """
-        x = input[0]
-        B, N, C, H, W = x.shape
+        x = input[0]  # img_feat
+        B, N, C, H, W = x.shape  # B 6 256 16 44
         x = x.view(B * N, C, H, W)
+        # 从雷达直接获取深度
         if self.with_depth_from_lidar:
             assert depth_from_lidar is not None
             if isinstance(depth_from_lidar, list):
@@ -351,7 +365,7 @@ class LSSViewTransformer(BaseModule):
         else:
             x = self.depth_net(x)
 
-        depth_digit = x[:, :self.D, ...]
+        depth_digit = x[:, :self.D, ...]  # D = 59 # 6 59 16 44
         tran_feat = x[:, self.D:self.D + self.out_channels, ...]
         depth = depth_digit.softmax(dim=1)
         return self.view_transform(input, depth, tran_feat)

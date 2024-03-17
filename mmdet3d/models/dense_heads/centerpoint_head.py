@@ -343,12 +343,12 @@ class CenterHead(BaseModule):
         """
         ret_dicts = []
 
-        x = self.shared_conv(x)
+        x = self.shared_conv(x) # B 64 128 128
 
         for task in self.task_heads:
             ret_dicts.append(task(x))
-
-        return ret_dicts
+        # 'heatmap', 'reg', 'height', 'dim', 'rot', 'vel', etc.
+        return ret_dicts # B 10 128 128
 
     def forward(self, feats):
         """Forward pass.

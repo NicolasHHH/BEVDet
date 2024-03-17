@@ -34,38 +34,48 @@ class BEVDet(CenterPoint):
         self.grid_mask = None if not use_grid_mask else \
             GridMask(True, True, rotate=1, offset=False, ratio=0.5, mode=1,
                      prob=0.7)
+
         self.img_view_transformer = builder.build_neck(img_view_transformer)
+        # CustonFPN_out -> depthg_net -> voxel_pooling_v2 -> bev_feat/depth
+        #                                         î
+        #       create_frustum -> get_lidar_coor _|
+
         if img_bev_encoder_neck and img_bev_encoder_backbone:
             self.img_bev_encoder_backbone = \
                 builder.build_backbone(img_bev_encoder_backbone)
             self.img_bev_encoder_neck = builder.build_neck(img_bev_encoder_neck)
 
     def image_encoder(self, img, stereo=False):
+        # 相机图像特征提取 240317
         imgs = img
-        B, N, C, imH, imW = imgs.shape
+        B, N, C, imH, imW = imgs.shape # B 6 3 256 704
         imgs = imgs.view(B * N, C, imH, imW)
         if self.grid_mask is not None:
             imgs = self.grid_mask(imgs)
-        x = self.img_backbone(imgs)
+        x = self.img_backbone(imgs)  # 骨干网络处理 Resnet50
+        # x[0] = 6 1024 16 44
+        # x[1] = 6 2048 8 22
+        # 【可视化】 plt.imshow(x[0].cpu().detach().numpy())
         stereo_feat = None
         if stereo:
             stereo_feat = x[0]
             x = x[1:]
         if self.with_img_neck:
-            x = self.img_neck(x)
+            x = self.img_neck(x) # CustomFPN
             if type(x) in [list, tuple]:
                 x = x[0]
-        _, output_dim, ouput_H, output_W = x.shape
+        _, output_dim, ouput_H, output_W = x.shape # 6 256 16 44
         x = x.view(B, N, output_dim, ouput_H, output_W)
         return x, stereo_feat
 
     @force_fp32()
     def bev_encoder(self, x):
-        x = self.img_bev_encoder_backbone(x)
-        x = self.img_bev_encoder_neck(x)
+        # B 64 128 128
+        x = self.img_bev_encoder_backbone(x) # CustomResnet
+        x = self.img_bev_encoder_neck(x) # FPN_LSS
         if type(x) in [list, tuple]:
             x = x[0]
-        return x
+        return x # B 256 128 128
 
     def prepare_inputs(self, inputs):
         # split the inputs into each frame
@@ -90,15 +100,15 @@ class BEVDet(CenterPoint):
     def extract_img_feat(self, img, img_metas, **kwargs):
         """Extract features of images."""
         img = self.prepare_inputs(img)
-        x, _ = self.image_encoder(img[0])
-        x, depth = self.img_view_transformer([x] + img[1:7])
-        x = self.bev_encoder(x)
+        x, _ = self.image_encoder(img[0]) # 【为什么】是0， 另一个输出是 stereo feat
+        x, depth = self.img_view_transformer([x] + img[1:7]) # LSSViewTransformer
+        x = self.bev_encoder(x) # BEV特征提取
         return [x], depth
 
     def extract_feat(self, points, img, img_metas, **kwargs):
         """Extract features from images and points."""
         img_feats, depth = self.extract_img_feat(img, img_metas, **kwargs)
-        pts_feats = None
+        pts_feats = None  # 为之后多模态融合预留接口
         return (img_feats, pts_feats, depth)
 
     def forward_train(self,
@@ -137,8 +147,11 @@ class BEVDet(CenterPoint):
         Returns:
             dict: Losses of different branches.
         """
+        # 提取图像特征 -> extract_img_feat -> prepare_inputs -> image_encoder
+        # -> img_view_transformer -> bev_encoder
         img_feats, pts_feats, _ = self.extract_feat(
             points, img=img_inputs, img_metas=img_metas, **kwargs)
+        # 损失计算
         losses = dict()
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,

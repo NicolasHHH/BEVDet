@@ -74,7 +74,8 @@ class CenterPoint(MVXTwoStageDetector):
         Returns:
             dict: Losses of each branch.
         """
-        outs = self.pts_bbox_head(pts_feats)
+        outs = self.pts_bbox_head(pts_feats) # shared conv
+        # dense_heads.centerpoint_head.py CenterHead::forward_single()
         loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
         losses = self.pts_bbox_head.loss(*loss_inputs)
         return losses
